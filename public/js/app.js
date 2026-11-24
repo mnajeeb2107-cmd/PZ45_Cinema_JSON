@@ -3,6 +3,8 @@ const status = document.querySelector("#status");
 const summary = document.querySelector("#summary");
 const search = document.querySelector("#search");
 const genre = document.querySelector("#genre");
+const loadButton = document.querySelector("#load-button");
+const clearButton = document.querySelector("#clear-button");
 
 let allMovies = [];
 
@@ -20,10 +22,10 @@ function normalizeMovie(raw) {
       ? item.title.trim()
       : "Без названия";
 
-  const genreValue =
+  const genreName =
     typeof item.genre === "string" && item.genre.trim()
       ? item.genre.trim()
-      : "Жанр не указан";
+      : "Без жанра";
 
   const parsedYear = Number(item.year);
   const year = Number.isFinite(parsedYear) && parsedYear > 0 ? parsedYear : "—";
@@ -39,25 +41,40 @@ function normalizeMovie(raw) {
 
   const sessions = Array.isArray(item.sessions)
     ? item.sessions
-        .map((s) => (typeof s === "string" ? s.trim() : String(s ?? "")))
-        .filter(Boolean)
+        .filter((s) => typeof s === "string" && s.trim() !== "")
+        .map((s) => s.trim())
     : [];
 
   const tags = Array.isArray(item.tags)
     ? item.tags
-        .map((t) => (typeof t === "string" ? t.trim() : String(t ?? "")))
-        .filter(Boolean)
+        .filter((t) => typeof t === "string" && t.trim() !== "")
+        .map((t) => t.trim())
     : [];
 
   return {
     title,
-    genre: genreValue,
+    genre: genreName,
     year,
     rating,
     duration,
     sessions,
     tags,
   };
+}
+
+function syncGenreOptions(movies) {
+  if (!genre || genre.options.length > 1) return;
+
+  const uniqueGenres = [...new Set(movies.map((m) => m.genre))].sort((a, b) =>
+    a.localeCompare(b, "ru")
+  );
+
+  uniqueGenres.forEach((genreItem) => {
+    const option = document.createElement("option");
+    option.value = genreItem;
+    option.textContent = genreItem;
+    genre.appendChild(option);
+  });
 }
 
 function renderMovies(movies) {
@@ -68,7 +85,7 @@ function renderMovies(movies) {
   if (!Array.isArray(movies) || movies.length === 0) {
     const emptyBlock = document.createElement("div");
     emptyBlock.className = "empty";
-    emptyBlock.textContent = "Фильмы не найдены.";
+    emptyBlock.textContent = "Фильмы не найдены. Попробуйте изменить фильтры или загрузить список заново.";
     list.appendChild(emptyBlock);
     return;
   }
@@ -87,7 +104,7 @@ function renderMovies(movies) {
     const sessionsEl = document.createElement("p");
     sessionsEl.className = "movie-sessions";
     if (movie.sessions.length > 0) {
-      sessionsEl.textContent = `Ближайший сеанс: ${movie.sessions} (все: ${movie.sessions.join(", ")})`;
+      sessionsEl.textContent = `Ближайший сеанс: ${movie.sessions[0]} (${movie.sessions.join(", ")})`;
     } else {
       sessionsEl.textContent = "Сеансы пока не назначены";
     }
@@ -125,46 +142,61 @@ function applyFilters() {
   });
 
   if (summary) {
-    summary.textContent = `Найдено: ${filtered.length} из ${allMovies.length}`;
+    summary.textContent = `Показано: ${filtered.length} из ${allMovies.length}`;
   }
 
   renderMovies(filtered);
 }
 
+function setButtonsDisabled(disabled) {
+  if (loadButton) loadButton.disabled = disabled;
+  if (clearButton) clearButton.disabled = disabled;
+}
+
 async function fetchMovies(empty = false) {
   const url = empty ? "/api/movies?empty=1" : "/api/movies";
-  setStatus("Загрузка...", "info");
+
+  setButtonsDisabled(true);
+  setStatus("Загрузка данных...", "info");
 
   try {
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(`Ошибка сервера: ${response.status}`);
     }
 
     const data = await response.json();
-    const rawMovies = Array.isArray(data?.movies) ? data.movies : [];
-
     if (!data || !Array.isArray(data.movies)) {
-      throw new Error("Поле data.movies не является массивом");
+      throw new Error("Некорректный формат JSON: отсутствует массив movies");
     }
 
-    allMovies = rawMovies.map(normalizeMovie);
+    allMovies = data.movies.map(normalizeMovie);
+    syncGenreOptions(allMovies);
     applyFilters();
-    setStatus(`Загружено фильмов: ${allMovies.length}`, "success");
+
+    if (allMovies.length === 0) {
+      setStatus("Сервер вернул пустой список фильмов", "info");
+    } else {
+      setStatus(`Загружено фильмов: ${allMovies.length}`, "success");
+    }
   } catch (error) {
     allMovies = [];
     applyFilters();
-    setStatus(`Ошибка загрузки: ${error.message}`, "error");
+    setStatus(`Ошибка: ${error.message}`, "error");
+  } finally {
+    setButtonsDisabled(false);
   }
 }
 
-document
-  .querySelector("#load-button")
-  ?.addEventListener("click", () => fetchMovies(false));
+loadButton?.addEventListener("click", () => {
+  if (search) search.value = "";
+  if (genre) genre.value = genre.options[0]?.value ?? "";
+  fetchMovies(false);
+});
 
-document
-  .querySelector("#clear-button")
-  ?.addEventListener("click", () => fetchMovies(true));
+clearButton?.addEventListener("click", () => {
+  fetchMovies(true);
+});
 
 search?.addEventListener("input", applyFilters);
 genre?.addEventListener("change", applyFilters);
